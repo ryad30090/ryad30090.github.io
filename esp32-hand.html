@@ -3,26 +3,36 @@
 <head>
   <meta charset="UTF-8">
   <title>ESP32 Hand Control</title>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <style>
     body { text-align: center; background: #111; color: white; font-family: Arial; }
-    video { border-radius: 10px; margin-top: 10px; }
+    .container { position: relative; width: 640px; margin: auto; }
+    /* تم إضافة Canvas للرسم فوق الفيديو */
+    canvas.output_canvas, video.input_video { 
+        position: absolute; 
+        left: 0; 
+        top: 0; 
+        border-radius: 10px; 
+    }
     h1 { color: #00ff99; }
   </style>
 </head>
 <body>
   <h1>ESP32 Hand Control</h1>
-  <video class="input_video" autoplay></video>
+  <div class="container">
+    <video class="input_video" width="640px" height="480px"></video>
+    <canvas class="output_canvas" width="640px" height="480px"></canvas>
+  </div>
   <p id="status">Detecting...</p>
 
   <script>
     const videoElement = document.querySelector('.input_video');
+    const canvasElement = document.querySelector('.output_canvas');
+    const canvasCtx = canvasElement.getContext('2d');
     const statusText = document.getElementById('status');
-
-    // عنوان ESP32
-    const espIP = "http://192.168.1.101";
+    const espIP = "http://192.168.1.101"; // تأكد من أن هذا هو الـ IP الصحيح
 
     function sendCommand(path) {
       fetch(`${espIP}/${path}`)
@@ -34,33 +44,52 @@
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
     });
 
+    // تم تعديل الحساسية
     hands.setOptions({
       maxNumHands: 1,
-      minDetectionConfidence: 0.7,
-      minTrackingConfidence: 0.7
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
     });
 
     hands.onResults((results) => {
-      if (!results.multiHandLandmarks[0]) return;
-      const landmarks = results.multiHandLandmarks[0];
-      const tips = [8, 12, 16, 20];
-      const base = [6, 10, 14, 18];
-      let raised = [];
+      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+      canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+      
+      let msg = "none";
+      if (results.multiHandLandmarks && results.multiHandLandmarks[0]) {
+        // --- (الجديد) رسم اليد على الشاشة ---
+        for (const landmarks of results.multiHandLandmarks) {
+          drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 5});
+          drawLandmarks(canvasCtx, landmarks, {color: '#FF0000', lineWidth: 2});
+        }
+        // --- نهاية كود الرسم ---
 
-      for (let i = 0; i < 4; i++) {
-        if (landmarks[tips[i]].y < landmarks[base[i]].y) raised.push(i);
+        const landmarks = results.multiHandLandmarks[0];
+        const tips = [8, 12, 16, 20]; // رؤوس الأصابع (سبابة، وسطى، بنصر، خنصر)
+        const base = [6, 10, 14, 18]; // قواعد الأصابع
+        let raisedFingers = 0;
+
+        // التحقق من الأصابع الأربعة
+        for (let i = 0; i < 4; i++) {
+          if (landmarks[tips[i]].y < landmarks[base[i]].y) {
+            raisedFingers++;
+          }
+        }
+        
+        // التحقق من الإبهام
+        const isThumbUp = landmarks[4].x < landmarks[3].x;
+        
+        // منطق إرسال الأوامر
+        if (raisedFingers === 0 && isThumbUp) { msg = "thumb_up"; sendCommand("led5/on"); }
+        else if (raisedFingers === 1 && landmarks[8].y < landmarks[6].y) { msg = "index_finger_up"; sendCommand("led4/on"); }
+        else if (raisedFingers === 1 && landmarks[12].y < landmarks[10].y) { msg = "middle_finger_up"; sendCommand("led3/on"); }
+        else if (raisedFingers === 1 && landmarks[16].y < landmarks[14].y) { msg = "ring_finger_up"; sendCommand("led2/on"); }
+        else if (raisedFingers === 1 && landmarks[20].y < landmarks[18].y) { msg = "pinky_up"; sendCommand("led1/on"); }
+        else { sendCommand("all/off"); }
+
+      } else {
+         sendCommand("all/off");
       }
-
-      if (landmarks[4].x < landmarks[3].x - 0.05) raised.push('thumb');
-
-      let msg = "";
-      if (raised.includes('thumb')) { msg = "thumb_up"; sendCommand("led1/on"); }
-      else if (raised.includes(0)) { msg = "index_up"; sendCommand("led2/on"); }
-      else if (raised.includes(1)) { msg = "middle_up"; sendCommand("led3/on"); }
-      else if (raised.includes(2)) { msg = "ring_up"; sendCommand("led4/on"); }
-      else if (raised.includes(3)) { msg = "pinky_up"; sendCommand("led5/on"); }
-      else { msg = "none"; sendCommand("all/off"); }
-
       statusText.innerText = "Detected: " + msg;
     });
 
