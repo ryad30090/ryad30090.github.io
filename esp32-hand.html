@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>ESP32 Hand Control</title>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <style>
+    body { text-align: center; background: #111; color: white; font-family: Arial; }
+    video { border-radius: 10px; margin-top: 10px; }
+    h1 { color: #00ff99; }
+  </style>
+</head>
+<body>
+  <h1>ESP32 Hand Control</h1>
+  <video class="input_video" autoplay></video>
+  <p id="status">Detecting...</p>
+
+  <script>
+    const videoElement = document.querySelector('.input_video');
+    const statusText = document.getElementById('status');
+
+    // عنوان ESP32
+    const espIP = "http://192.168.1.101";
+
+    function sendCommand(path) {
+      fetch(`${espIP}/${path}`)
+        .then(() => console.log(`Command sent: ${path}`))
+        .catch(err => console.log('Error:', err));
+    }
+
+    const hands = new Hands({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+
+    hands.setOptions({
+      maxNumHands: 1,
+      minDetectionConfidence: 0.7,
+      minTrackingConfidence: 0.7
+    });
+
+    hands.onResults((results) => {
+      if (!results.multiHandLandmarks[0]) return;
+      const landmarks = results.multiHandLandmarks[0];
+      const tips = [8, 12, 16, 20];
+      const base = [6, 10, 14, 18];
+      let raised = [];
+
+      for (let i = 0; i < 4; i++) {
+        if (landmarks[tips[i]].y < landmarks[base[i]].y) raised.push(i);
+      }
+
+      if (landmarks[4].x < landmarks[3].x - 0.05) raised.push('thumb');
+
+      let msg = "";
+      if (raised.includes('thumb')) { msg = "thumb_up"; sendCommand("led1/on"); }
+      else if (raised.includes(0)) { msg = "index_up"; sendCommand("led2/on"); }
+      else if (raised.includes(1)) { msg = "middle_up"; sendCommand("led3/on"); }
+      else if (raised.includes(2)) { msg = "ring_up"; sendCommand("led4/on"); }
+      else if (raised.includes(3)) { msg = "pinky_up"; sendCommand("led5/on"); }
+      else { msg = "none"; sendCommand("all/off"); }
+
+      statusText.innerText = "Detected: " + msg;
+    });
+
+    const camera = new Camera(videoElement, {
+      onFrame: async () => { await hands.send({ image: videoElement }); },
+      width: 640,
+      height: 480
+    });
+    camera.start();
+  </script>
+</body>
+</html>
